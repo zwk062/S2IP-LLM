@@ -80,11 +80,11 @@ class Prompt(nn.Module):
         x_inv_norm = torch.rsqrt(torch.maximum(square_sum, torch.tensor(epsilon, device=x.device)))
         return x * x_inv_norm
     
-    def forward(self, x_embed, prompt_mask=None, cls_features=None):
+    def forward(self, x_embed, prompt_mask=None, cls_features=None): # x_embed (B, N, D) batchsize，token数（序列长度），embedding维度（d_model）
         out = dict()
         if self.prompt_key:   #if self.prompt_pool:
-            if self.embedding_key == 'mean':
-                x_embed_mean = torch.mean(x_embed, dim=1)
+            if self.embedding_key == 'mean': 
+                x_embed_mean = torch.mean(x_embed, dim=1) # 每个样本取所有 token 的平均值作为 embedding key (B, D)
             elif self.embedding_key == 'max':
                 x_embed_mean = torch.max(x_embed, dim=1)[0]
             elif self.embedding_key == 'mean_max':
