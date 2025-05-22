@@ -110,17 +110,17 @@ class Model(nn.Module):
         
          
             
-        B, L, M = x_enc.shape
-            
+        B, L, M = x_enc.shape # batchsize,sequence length,变量数
+        # 归一化
         means = x_enc.mean(1, keepdim=True).detach()
         x_enc = x_enc - means
         stdev = torch.sqrt(
         torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
         x_enc /= stdev
- 
-        x = rearrange(x_enc, 'b l m -> (b m) l') 
+        # 把每个样本的每个变量展开为单独的序列，Transformer 是基于序列建模的，它最擅长处理 一维序列
+        x = rearrange(x_enc, 'b l m -> (b m) l')   # [样本1-变量1的时间序列]
 
-
+        # 时间序列分解
         def decompose(x):
             df = pd.DataFrame(x)
             trend = df.rolling(window=self.configs.trend_length, center=True).mean().fillna(method='bfill').fillna(method='ffill')
@@ -128,23 +128,24 @@ class Model(nn.Module):
             seasonal = detrended.groupby(detrended.index % self.configs.seasonal_length).transform('mean').fillna(method='bfill').fillna(method='ffill') 
             residuals = df - trend - seasonal
             combined = np.stack([trend, seasonal, residuals], axis=1)
-            return combined
+            return combined # (T, 3, M)
                 
             
 
-        decomp_results = np.apply_along_axis(decompose, 1, x.cpu().numpy())
+        decomp_results = np.apply_along_axis(decompose, 1, x.cpu().numpy()) # (B, T, 3, M)
         x = torch.tensor(decomp_results).to(self.gpt2.device)
-        x = rearrange(x, 'b l c d  -> b c (d l)', c = 3)
-        x = self.padding_patch_layer(x)
-        x = x.unfold(dimension=-1, size=self.patch_size, step=self.stride)
-        x = rearrange(x, 'b c n p -> b n (c p)', c = 3)  
-        pre_prompted_embedding = self.in_layer(x.float())
-
+        x = rearrange(x, 'b l c d  -> b c (d l)', c = 3) # 将每个成分（trend/seasonal/residual）分别视作一个长向量 (B, 3, M*T)
+        x = self.padding_patch_layer(x) # 补0
+        x = x.unfold(dimension=-1, size=self.patch_size, step=self.stride) # 切分 Patch (B, 3, N, P) N: patch 数量 P: patch 大小
+        x = rearrange(x, 'b c n p -> b n (c p)', c = 3)  # (B, N, 3 * P) 每个 patch 被拉成一个向量（包含 trend + seasonal + residual）
+        pre_prompted_embedding = self.in_layer(x.float()) # self.in_layer 是一个投影层，例如 nn.Linear(3 * P, d_model)，用于将 patch 向量映射为 Transformer/GPT 接收的 token embedding。(B, N, d_model)
+        
+        # 类似 ViT (Vision Transformer) 中将图像切成 patch：这里是将时间序列“切片”为 patch；每个 patch 编码了 trend/seasonal/residual 的结构；然后送入 GPT/Transformer 主干模型，作为 token 序列进行学习；
 
 
 
             
-        outs = self.prompt_pool(pre_prompted_embedding)
+        outs = self.prompt_pool(pre_prompted_embedding) # Semantic Space Informed Prompting
         prompted_embedding = outs['prompted_embedding']
         sim = outs['similarity']
         prompt_key = outs['prompt_key']
