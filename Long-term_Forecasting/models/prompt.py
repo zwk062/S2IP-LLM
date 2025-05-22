@@ -82,6 +82,7 @@ class Prompt(nn.Module):
     
     def forward(self, x_embed, prompt_mask=None, cls_features=None): # x_embed (B, N, D) batchsize，token数（序列长度），embedding维度（d_model）
         out = dict()
+        # 1.计算输入的语义表示 key
         if self.prompt_key:   #if self.prompt_pool:
             if self.embedding_key == 'mean': 
                 x_embed_mean = torch.mean(x_embed, dim=1) # 每个样本取所有 token 的平均值作为 embedding key (B, D)
@@ -97,18 +98,20 @@ class Prompt(nn.Module):
             else:
                 raise NotImplementedError("Not supported way of calculating embedding keys!")
 
-            
+            # 2.初始化提示 key（如果用 text_prototype 就做线性变换；否则直接用 prompt 向量）
             if self.prompt_key_init == 'text_prototype':
                 prompt_key = self.text_prototype_linear(self.wte.transpose(0, 1)).transpose(0, 1)
             
             else:
                 prompt_key = self.prompt
-            
+                
+            # 3. L2归一化并计算相似度矩阵（输入 key 与提示 key 之间的余弦相似度）
             prompt_norm = self.l2_normalize(prompt_key, dim=1) # Pool_size, C   self.prompt_key
             x_embed_norm = self.l2_normalize(x_embed_mean, dim=1) # B, C
 
             similarity = torch.matmul(x_embed_norm, prompt_norm.t()) # B, Pool_size
             
+            # 4. 根据相似度选择 top-k 个提示向量（每个样本单独选择）
             if prompt_mask is None:
                 _, idx = torch.topk(similarity, k=self.top_k, dim=1) # B, top_k
                 if self.batchwise_prompt:
@@ -159,6 +162,7 @@ class Prompt(nn.Module):
         
         # The input with the prompt concatenated to the front. [B, prompt+token, C]
         out['total_prompt_len'] = batched_prompt.shape[1]
+        # 6.拼接提示与原始输入向量
         out['prompted_embedding'] = torch.cat([batched_prompt, x_embed], dim=1)
         out['prompt_key'] = prompt_key  # prompt_key
 
